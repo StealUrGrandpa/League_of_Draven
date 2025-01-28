@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import threading
 import tracemalloc
 from io import BytesIO
 from random import random
@@ -368,22 +369,33 @@ async def initialize_bot():
     await fetch_champion_data()
     print("Данные о чемпионах загружены.")
 
+from flask import Flask
+
+app = Flask(__name__)
 
 
+def run_telegram_bot():
+    asyncio.set_event_loop(asyncio.new_event_loop())  # Устанавливаем новый событийный цикл для этого потока
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(initialize_bot())  # Инициализируем бота асинхронно
 
-if __name__ == '__main__':
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(initialize_bot())
     application = ApplicationBuilder().token(bot_token).build()
 
     tracemalloc.start()
-    start_handler = CommandHandler('start', start)
-    application.add_handler(start_handler)
-
+    application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
     application.add_handler(InlineQueryHandler(inline_query))
-    application.add_handler(CallbackQueryHandler(button_handler))  # Register the callback query handler for inline buttons
+    application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(ChosenInlineResultHandler(chosen_inline_result))
 
     application.run_polling()
+
+
+# Main function
+if __name__ == '__main__':
+    # Start Telegram bot in a separate thread
+    telegram_thread = threading.Thread(target=run_telegram_bot)
+    telegram_thread.start()
+
+    # Run Flask app on port 8000
+    app.run(host='0.0.0.0', port=8000)
