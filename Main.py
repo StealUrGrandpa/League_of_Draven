@@ -10,7 +10,10 @@ from telegram import Update, Bot, InlineQueryResultArticle, InputTextMessageCont
 from telegram.ext import ApplicationBuilder, CommandHandler, InlineQueryHandler, ChosenInlineResultHandler, \
     MessageHandler, filters, CallbackQueryHandler
 
-bot_token = "7052706701:AAHo9_cEwYowA8DeQOW9ghPTtPMNkl-3khE"
+import os
+
+bot_token = os.getenv('bot_token')
+
 def reworked_chams(champs):
 
     url = f"https://ddragon.leagueoflegends.com/cdn/14.24.1/data/ru_RU/champion.json"
