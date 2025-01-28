@@ -8,7 +8,7 @@ from runes import rune_build
 import requests
 from telegram import Update, Bot, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import ApplicationBuilder, CommandHandler, InlineQueryHandler, ChosenInlineResultHandler, \
-    MessageHandler, filters, CallbackQueryHandler
+    MessageHandler, filters, CallbackQueryHandler, Updater
 
 import os
 
@@ -369,8 +369,11 @@ async def initialize_bot():
     print("Данные о чемпионах загружены.")
 
 
+
+
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     loop.run_until_complete(initialize_bot())
     application = ApplicationBuilder().token(bot_token).build()
 
