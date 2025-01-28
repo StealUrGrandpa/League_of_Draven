@@ -194,7 +194,7 @@ def rune_build(champion):
         draw.rounded_rectangle([125, 50, 550, 150], radius=30, fill=(46, 35, 108, 255))
         text = en_to_ru[prime]
         text_color = (255, 255, 255)
-        font = ImageFont.truetype(r"D:\Python\League Of Draven\test\beaufort.ttf", 50)
+        font = ImageFont.truetype(r"font\beaufort.ttf", 50)
         text_bbox = draw.textbbox((0, 0), text, font=font)
         text_width = text_bbox[2] - text_bbox[0]
         text_height = text_bbox[3] - text_bbox[1] + 25
