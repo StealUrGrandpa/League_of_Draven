@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import multiprocessing
 import threading
 import tracemalloc
 from io import BytesIO
@@ -15,8 +16,8 @@ import os
 
 bot_token = os.getenv('bot_token')
 
-def reworked_chams(champs):
 
+def reworked_chams(champs):
     url = f"https://ddragon.leagueoflegends.com/cdn/14.24.1/data/ru_RU/champion.json"
 
     response = requests.get(url)
@@ -59,6 +60,8 @@ def get_champion_detailed_info(champion_key):
     if response.status_code == 200:
         return response.json()['data'][champion_key]
     return None
+
+
 async def recent_message():
     get_updates_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
 
@@ -70,6 +73,7 @@ async def recent_message():
         return latest_message["message"]["message_id"]
     else:
         return None
+
 
 async def fetch_champion_data():
     url = "https://ddragon.leagueoflegends.com/cdn/14.24.1/data/ru_RU/champion.json"
@@ -88,7 +92,10 @@ async def message_handler(update, context):
 
     await bot.delete_message(chat_id=user_id, message_id=message.message_id)
 
+
 image_cashe = {}
+
+
 async def send_image(chat_id, image_url, caption, name, key):
     global name_global
     global last_message_id
@@ -108,7 +115,7 @@ async def send_image(chat_id, image_url, caption, name, key):
                 [
                     {"text": "Руны🔹", "callback_data": f"runes0{name}"},
                     {"text": "Предметы💰", "callback_data": f"items0{name}"},
-                    {"text": "Назад⬅️", "callback_data": f"back0{name}" },
+                    {"text": "Назад⬅️", "callback_data": f"back0{name}"},
                 ],
             ]
         }
@@ -164,8 +171,6 @@ async def send_image(chat_id, image_url, caption, name, key):
 
             requests.post(delete_message_url, data=delete_data)
 
-
-
         file_id = image_cashe[image_id]
         data = {
             "chat_id": chat_id,
@@ -200,10 +205,11 @@ async def send_image(chat_id, image_url, caption, name, key):
             'message_id': last_message_id,
             "caption": caption,
             "media": {
-                    "type": "photo",  # Указываем тип
-                    "media": image_url,  # URL изображения
-                    "caption": 'Выбирай, что хочешь! 💡✨ Однако, возможно, тебе придется подождать несколько секунд, пока билды загрузятся... ⏳',  # Подпись для изображения
-                    "parse_mode": "Markdown"  # Форматирование
+                "type": "photo",  # Указываем тип
+                "media": image_url,  # URL изображения
+                "caption": 'Выбирай, что хочешь! 💡✨ Однако, возможно, тебе придется подождать несколько секунд, пока билды загрузятся... ⏳',
+                # Подпись для изображения
+                "parse_mode": "Markdown"  # Форматирование
             },
             "parse_mode": "Markdown",  # Use HTML parse mode
             "reply_markup": reply_markup  # Inline keyboard as a JSON string
@@ -212,8 +218,6 @@ async def send_image(chat_id, image_url, caption, name, key):
 
         response = requests.post(send_photo_url, json=data)
         result = response.json()
-
-
 
         return result
 
@@ -231,7 +235,6 @@ async def send_image(chat_id, image_url, caption, name, key):
         response = requests.post(send_photo_url, data=data)
         result = response.json()
 
-
         return result
 
     elif key == 'query':
@@ -246,7 +249,6 @@ async def send_image(chat_id, image_url, caption, name, key):
         send_photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
         response = requests.post(send_photo_url, data=data)
         result = response.json()
-
 
         return result
     elif key == 'builds':
@@ -266,8 +268,6 @@ async def send_image(chat_id, image_url, caption, name, key):
         return result
 
 
-
-
 async def button_handler(update, context):
     global name_global
     global query_info
@@ -281,7 +281,6 @@ async def button_handler(update, context):
     if not name:
         name = name_global
 
-
     if callback_data.startswith("runes"):
         print('runes')
         await send_image(update.effective_chat.id, name=name, key='runes', image_url='', caption=f'{name}')
@@ -290,7 +289,7 @@ async def button_handler(update, context):
         await bot.answer_callback_query(callback_query_id=update.callback_query.id, text="В разработке")
 
     elif callback_data.startswith("builds"):
-        await send_image(update.effective_chat.id, name=name, key='builds', image_url='',caption='mamka tvoya')
+        await send_image(update.effective_chat.id, name=name, key='builds', image_url='', caption='mamka tvoya')
 
     elif keyy == "back" or keyy == "backtobuilds":
         if name in chams:
@@ -308,10 +307,8 @@ async def start(update, context):
     await send_image(update.effective_chat.id, "https://i.ibb.co/K7JQv2w/League-of-Draven.png",
                      "Добро пожаловать в <strong>Лигу Дрейвена</strong>🏆, где всё вращается вокруг величия, славы и... Дрейвена, конечно же!🎯"
                      "\n \n Хочешь узнать что-то о чемпионах? Легко! Просто напиши <strong>@League_Of_Draven_Bot {имя чемпиона}</strong> или нажми на кнопку ниже, и я расскажу тебе всё, что ты захочешь.📜✨"
-                     "\n\n Канал админа: https://t.me/leagueofdravens 📲 (Там ты сможешь следить за разработкой бота, давать свои идеи, и просто общаться)", key='start', name='Draven')
-
-
-
+                     "\n\n Канал админа: https://t.me/leagueofdravens 📲 (Там ты сможешь следить за разработкой бота, давать свои идеи, и просто общаться)",
+                     key='start', name='Draven')
 
 
 async def inline_query(update: Update, context):
@@ -357,11 +354,11 @@ async def chosen_inline_result(update, context):
     else:
         rr = f"https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{title}_0.jpg"
 
-    sent_message = await send_image(user_id, f"{rr}", f"*{name.title()}* \n\n*Лор*💬: {blurb}\n\n*Класс*🏆: {clas[:-2]}", name=title, key='query')
+    sent_message = await send_image(user_id, f"{rr}", f"*{name.title()}* \n\n*Лор*💬: {blurb}\n\n*Класс*🏆: {clas[:-2]}",
+                                    name=title, key='query')
 
     last_message_id = sent_message['result']['message_id']
     query_info = sent_message
-
 
 
 async def initialize_bot():
@@ -369,9 +366,15 @@ async def initialize_bot():
     await fetch_champion_data()
     print("Данные о чемпионах загружены.")
 
+
 from flask import Flask
 
 app = Flask(__name__)
+
+
+@app.route('/')
+def home():
+    return "Добро пожаловать! Flask сервер работает."
 
 
 def run_telegram_bot():
@@ -392,10 +395,17 @@ def run_telegram_bot():
 
 
 # Main function
-if __name__ == '__main__':
-    # Start Telegram bot in a separate thread
-    telegram_thread = threading.Thread(target=run_telegram_bot)
-    telegram_thread.start()
-
-    # Run Flask app on port 8000
+def run_flask():
     app.run(host='0.0.0.0', port=8000)
+    print("Flask сервер работает.")
+
+
+if __name__ == "__main__":
+    t1 = multiprocessing.Process(target=run_flask)
+    t2 = multiprocessing.Process(target=run_telegram_bot)
+
+    t1.start()
+    t2.start()
+
+    t1.join()
+    t2.join()
