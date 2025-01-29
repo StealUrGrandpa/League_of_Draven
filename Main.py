@@ -15,6 +15,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, InlineQueryHandler,
 import os
 
 bot_token = os.getenv('bot_token')
+bot = Bot(bot_token)
 
 
 def reworked_chams(champs):
@@ -50,8 +51,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
-
-bot = Bot(bot_token)
 
 
 def get_champion_detailed_info(champion_key):
@@ -96,9 +95,20 @@ async def message_handler(update, context):
 image_cashe = {}
 
 
+async def is_subscribed(user_id):
+    """Check if a user is subscribed to the channel."""
+    try:
+        member = await bot.get_chat_member('@leagueofdravens', user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except Exception:
+        return False
+
+
 async def send_image(chat_id, image_url, caption, name, key):
     global name_global
     global last_message_id
+    sub = await is_subscribed(chat_id)
+
     if key == 'query' or key == 'back':
         keyboard = {
             "inline_keyboard": [
@@ -207,7 +217,15 @@ async def send_image(chat_id, image_url, caption, name, key):
             "media": {
                 "type": "photo",  # Указываем тип
                 "media": image_url,  # URL изображения
-                "caption": 'Выбирай, что хочешь! 💡✨ Однако, возможно, тебе придется подождать несколько секунд, пока билды загрузятся... ⏳',
+                "caption": "Выбирай, что хочешь! 💡✨ Однако, возможно, тебе придется подождать несколько секунд, "
+                           "пока билды загрузятся... ⏳ !Не нажимай по 100 раз, просто подожди!" if sub else "Выбирай, что хочешь! 💡✨ Однако, "
+                                                                    "возможно, тебе придется подождать "
+                                                                    "несколько секунд, пока билды "
+                                                                    "загрузятся... ⏳ !Не нажимай по 100 раз, просто подожди! \n\n*Подпишись на "
+                                                                    "канал, чтобы следить за "
+                                                                    "обновлениями, и общаться с "
+                                                                    "другими игроками!📲 "
+                                                                    "@leagueofdravens* (Исчезнет после подписки)",
                 # Подпись для изображения
                 "parse_mode": "Markdown"  # Форматирование
             },
@@ -253,9 +271,18 @@ async def send_image(chat_id, image_url, caption, name, key):
         return result
     elif key == 'builds':
         print('builds')
+
         data = {
             "chat_id": chat_id,
-            "caption": "Выбирай, что хочешь! 💡✨ Однако, возможно, тебе придется подождать несколько секунд, пока билды загрузятся... ⏳",
+            "caption": "Выбирай, что хочешь! 💡✨ Однако, возможно, тебе придется подождать несколько секунд, "
+                       "пока билды загрузятся... ⏳ !Не нажимай по 100 раз, просто подожди!" if sub else "Выбирай, что хочешь! 💡✨ Однако, "
+                                                                "возможно, тебе придется подождать "
+                                                                "несколько секунд, пока билды "
+                                                                "загрузятся... ⏳ !Не нажимай по 100 раз, просто подожди! \n\n*Подпишись на "
+                                                                "канал, чтобы следить за "
+                                                                "обновлениями, и общаться с "
+                                                                "другими игроками!📲 "
+                                                                "@leagueofdravens* (Исчезнет после подписки)",
             "message_id": last_message_id,
             "parse_mode": "Markdown",  # Use HTML parse mode
             "reply_markup": reply_markup  # Inline keyboard as a JSON string
@@ -283,7 +310,9 @@ async def button_handler(update, context):
 
     if callback_data.startswith("runes"):
         print('runes')
+        await bot.answer_callback_query(callback_query_id=update.callback_query.id, text="Генерирую...")
         await send_image(update.effective_chat.id, name=name, key='runes', image_url='', caption=f'{name}')
+
 
     elif callback_data.startswith("items"):
         await bot.answer_callback_query(callback_query_id=update.callback_query.id, text="В разработке")
@@ -345,6 +374,7 @@ async def chosen_inline_result(update, context):
     blurb = champions_data[result_id4]['blurb']
     name_global = title
     clas = ""
+    sub = await is_subscribed(user_id)
     for g in champions_data[result_id4]['tags']:
         clas += str(champ_class.get(g)) + ", "
 
@@ -353,10 +383,15 @@ async def chosen_inline_result(update, context):
 
     else:
         rr = f"https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{title}_0.jpg"
+    if sub:
+        sent_message = await send_image(user_id, f"{rr}",
+                                        f"*{name.title()}* \n\n*Лор*💬: {blurb}\n\n*Класс*🏆: {clas[:-2]}",
+                                        name=title, key='query')
 
-    sent_message = await send_image(user_id, f"{rr}", f"*{name.title()}* \n\n*Лор*💬: {blurb}\n\n*Класс*🏆: {clas[:-2]}",
-                                    name=title, key='query')
-
+    else:
+        sent_message = await send_image(user_id, f"{rr}",
+                                        f"*{name.title()}* \n\n*Лор*💬: {blurb}\n\n*Класс*🏆: {clas[:-2]} \n\n*Подпишись на канал, чтобы следить за обновлениями, и общаться с другими игроками!📲 @leagueofdravens* (Исчезнет после подписки)",
+                                        name=title, key='query')
     last_message_id = sent_message['result']['message_id']
     query_info = sent_message
 
