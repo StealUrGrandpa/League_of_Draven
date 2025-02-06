@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import multiprocessing
-import threading
 import tracemalloc
 from io import BytesIO
 from random import random
@@ -10,26 +9,38 @@ from runes import rune_build
 import requests
 from telegram import Update, Bot, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import ApplicationBuilder, CommandHandler, InlineQueryHandler, ChosenInlineResultHandler, \
-    MessageHandler, filters, CallbackQueryHandler, Updater
-
+    MessageHandler, filters, CallbackQueryHandler
 import os
-
+from assets.message_data_enc import decrypt_json, encrypt_json, delete_value
+from flask import Flask
 bot_token = os.getenv('bot_token')
 bot = Bot(bot_token)
 
+response = requests.get('https://ddragon.leagueoflegends.com/api/versions.json')
+versions = response.json()
+version = versions[0]
 
-def reworked_chams(champs):
-    url = f"https://ddragon.leagueoflegends.com/cdn/14.24.1/data/ru_RU/champion.json"
 
+def load_key():
+    secret = os.getenv('secret_key')  # Ensure the variable name matches
+    if secret is None:
+        raise ValueError("Environment variable SECRET_KEY is not set.")
+    return secret.encode()  # Convert to bytes
+
+
+def get_champion_detailed_info(champion_key):
+    url = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/ru_RU/champion/{champion_key}.json"
     response = requests.get(url)
-    response.raise_for_status()
-    data1 = response.json()
+    if response.status_code == 200:
+        return response.json()['data'][champion_key]
+    return None
 
-    key = data1.get("data", {}).get(champs, {}).get("key")
 
-    ro = key + "/" + key + "000"
+def get_splash(champs):
+    key = get_champion_detailed_info(champs)
+    keyy = key['key']
 
-    don = f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-splashes/{ro}.jpg"
+    don = f"https://cdn.communitydragon.org/{version}/champion/{keyy}/splash-art"
 
     return don
 
@@ -43,7 +54,6 @@ champ_class = {
     'Assassin': 'Убийца'
 }
 
-chams = ["Pantheon", "DrMundo", "Jax", "Sivir", "Hecarim", "Kassadin", "Volibear", "Udyr", 'Morgana']
 champions_data = {}
 
 # Fetch champion data once at the start of the bot
@@ -53,29 +63,8 @@ logging.basicConfig(
 )
 
 
-def get_champion_detailed_info(champion_key):
-    url = f"https://ddragon.leagueoflegends.com/cdn/14.24.1/data/ru_RU/champion/{champion_key}.json"
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json()['data'][champion_key]
-    return None
-
-
-async def recent_message():
-    get_updates_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
-
-    response = requests.get(get_updates_url)
-    updates = response.json()
-
-    if updates["ok"] and updates["result"]:
-        latest_message = updates["result"][-1]
-        return latest_message["message"]["message_id"]
-    else:
-        return None
-
-
 async def fetch_champion_data():
-    url = "https://ddragon.leagueoflegends.com/cdn/14.24.1/data/ru_RU/champion.json"
+    url = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/ru_RU/champion.json"
     response = requests.get(url)
     if response.status_code == 200:
         champions_data.update(response.json()['data'])
@@ -104,54 +93,26 @@ async def is_subscribed(user_id):
         return False
 
 
-async def send_image(chat_id, image_url, caption, name, key):
-    global name_global
-    global last_message_id
+async def send_image(chat_id, image_url, caption, name, key, message_id):
     sub = await is_subscribed(chat_id)
 
-    if key == 'query' or key == 'back':
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "Билды🛠️", "callback_data": f'builds0{name}'},
-                    {"text": "Образы👑", "callback_data": f"skins0{name}"}
-                ],
-
-            ]
-        }
-    elif key == 'builds' or key == 'backtobuilds':
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "Руны🔹", "callback_data": f"runes0{name}"},
-                    {"text": "Предметы💰", "callback_data": f"items0{name}"},
-                    {"text": "Назад⬅️", "callback_data": f"back0{name}"},
-                ],
-            ]
-        }
-    elif key == 'runes' or key == 'items':
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "Назад⬅️", "callback_data": f"backtobuilds0{name}"},
-                ],
-            ]
-        }
-    elif key == 'start':
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "Искать Чемпиона🔍", "switch_inline_query_current_chat": ""},
-                ],
-            ]
-        }
-    reply_markup = json.dumps(keyboard)
-
     if key == 'runes':
-        image, image_id = rune_build(name)
+        dict_enc = decrypt_json(load_key())
+        info = dict_enc[str(chat_id)]
+        name_enc = info[str(message_id)]
+        print('got the data')
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Назад⬅️", "callback_data": f"backtobuilds0{name_enc}"},
+                ],
+            ]
+        }
+
+        reply_markup = json.dumps(keyboard)
+        image, image_id = rune_build(name_enc)
         if image_id not in image_cashe.keys():
             print(str(image_id) + "not found")
-
             img_buffer = BytesIO()
             image.save(img_buffer, format="PNG")
             img_buffer.seek(0)  # Move to the beginning of the buffer
@@ -172,11 +133,11 @@ async def send_image(chat_id, image_url, caption, name, key):
             file_id = result['result']['photo'][0]['file_id']
             image_cashe[image_id] = file_id
             print(str(image_id) + "saved")
-            message_id = result['result']['message_id']
+            message_idd = result['result']['message_id']
             delete_message_url = f"https://api.telegram.org/bot{bot_token}/deleteMessage"
             delete_data = {
                 "chat_id": chat_id,
-                "message_id": message_id
+                "message_id": message_idd
             }
 
             requests.post(delete_message_url, data=delete_data)
@@ -184,7 +145,7 @@ async def send_image(chat_id, image_url, caption, name, key):
         file_id = image_cashe[image_id]
         data = {
             "chat_id": chat_id,
-            'message_id': last_message_id,
+            'message_id': message_id,
             "caption": "Вот твои руны",
             "media": json.dumps({"type": "photo", "media": file_id}),
             "parse_mode": "Markdown",  # Use HTML parse mode
@@ -193,9 +154,18 @@ async def send_image(chat_id, image_url, caption, name, key):
         send_photo_url = f"https://api.telegram.org/bot{bot_token}/editMessageMedia"
         response = requests.post(send_photo_url, data=data)
         result = response.json()
+        print(result)
         return result
 
     elif key == 'start':
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Искать Чемпиона🔍", "switch_inline_query_current_chat": ""},
+                ],
+            ]
+        }
+        reply_markup = json.dumps(keyboard)
         data = {
             "chat_id": chat_id,
             "caption": caption,
@@ -206,26 +176,34 @@ async def send_image(chat_id, image_url, caption, name, key):
         send_photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
         response = requests.post(send_photo_url, data=data)
         result = response.json()
-        print(result)
-        return result
 
     elif key == 'backtobuilds':
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Руны🔹", "callback_data": f"runes0{name}"},
+                    {"text": "Предметы💰", "callback_data": f"items0{name}"},
+                    {"text": "Назад⬅️", "callback_data": f"back0{name}"},
+                ],
+            ]
+        }
+        reply_markup = json.dumps(keyboard)
         data = {
             "chat_id": chat_id,
-            'message_id': last_message_id,
+            'message_id': message_id,
             "caption": caption,
             "media": {
                 "type": "photo",  # Указываем тип
                 "media": image_url,  # URL изображения
                 "caption": "Выбирай, что хочешь! 💡✨ Однако, возможно, тебе придется подождать несколько секунд, "
                            "пока билды загрузятся... ⏳ !Не нажимай по 100 раз, просто подожди!" if sub else "Выбирай, что хочешь! 💡✨ Однако, "
-                                                                    "возможно, тебе придется подождать "
-                                                                    "несколько секунд, пока билды "
-                                                                    "загрузятся... ⏳ !Не нажимай по 100 раз, просто подожди! \n\n*Подпишись на "
-                                                                    "канал, чтобы следить за "
-                                                                    "обновлениями, и общаться с "
-                                                                    "другими игроками!📲 "
-                                                                    "@leagueofdravens* (Исчезнет после подписки)",
+                                                                                                            "возможно, тебе придется подождать "
+                                                                                                            "несколько секунд, пока билды "
+                                                                                                            "загрузятся... ⏳ !Не нажимай по 100 раз, просто подожди! \n\n*Подпишись на "
+                                                                                                            "канал, чтобы следить за "
+                                                                                                            "обновлениями, и общаться с "
+                                                                                                            "другими игроками!📲 "
+                                                                                                            "@leagueofdravens* (Исчезнет после подписки)",
                 # Подпись для изображения
                 "parse_mode": "Markdown"  # Форматирование
             },
@@ -237,15 +215,23 @@ async def send_image(chat_id, image_url, caption, name, key):
         response = requests.post(send_photo_url, json=data)
         result = response.json()
 
-        return result
-
     elif key == 'back':
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Билды🛠️", "callback_data": f'builds0{name}'},
+                    {"text": "Образы👑", "callback_data": f"skins0{name}"}
+                ],
+
+            ]
+        }
+        reply_markup = json.dumps(keyboard)
         print('back pressed')
 
         data = {
             "chat_id": chat_id,
             "caption": caption,
-            "message_id": last_message_id,
+            "message_id": message_id,
             "parse_mode": "Markdown",  # Use HTML parse mode
             "reply_markup": reply_markup  # Inline keyboard as a JSON string
         }
@@ -253,10 +239,18 @@ async def send_image(chat_id, image_url, caption, name, key):
         response = requests.post(send_photo_url, data=data)
         result = response.json()
 
-        return result
-
     elif key == 'query':
-        print('got it here')
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Билды🛠️", "callback_data": f'builds0{name}'},
+                    {"text": "Образы👑", "callback_data": f"skins0{name}"}
+                ],
+
+            ]
+        }
+        reply_markup = json.dumps(keyboard)
+
         data = {
             "chat_id": chat_id,
             "caption": caption,
@@ -268,68 +262,110 @@ async def send_image(chat_id, image_url, caption, name, key):
         response = requests.post(send_photo_url, data=data)
         result = response.json()
 
-        return result
+        message_id = result["result"]["message_id"]
+        secret_key = load_key()
+        see = decrypt_json(secret_key)
+        user_id = str(chat_id)
+        MAX_MESSAGES = 100
+
+        if user_id not in see:
+            print('chat_id not in see')
+            see[user_id] = {}
+
+        if message_id not in see[user_id]:
+
+            see[user_id][message_id] = name
+
+            if len(see[user_id]) > MAX_MESSAGES:
+                oldest_message_id = next(iter(see[user_id]))
+                delete_value(user_id, message_id, secret_key)
+                del see[user_id][oldest_message_id]
+
+                # Encrypt updated dictionary
+            encrypt_json(data=see, secret_key=secret_key)
+
+            print('data saved')
+
     elif key == 'builds':
-        print('builds')
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Руны🔹", "callback_data": f"runes0{name}"},
+                    {"text": "Предметы💰", "callback_data": f"items0{name}"},
+                    {"text": "Назад⬅️", "callback_data": f"back0{name}"},
+                ],
+            ]
+        }
+        reply_markup = json.dumps(keyboard)
 
         data = {
             "chat_id": chat_id,
             "caption": "Выбирай, что хочешь! 💡✨ Однако, возможно, тебе придется подождать несколько секунд, "
                        "пока билды загрузятся... ⏳ !Не нажимай по 100 раз, просто подожди!" if sub else "Выбирай, что хочешь! 💡✨ Однако, "
-                                                                "возможно, тебе придется подождать "
-                                                                "несколько секунд, пока билды "
-                                                                "загрузятся... ⏳ !Не нажимай по 100 раз, просто подожди! \n\n*Подпишись на "
-                                                                "канал, чтобы следить за "
-                                                                "обновлениями, и общаться с "
-                                                                "другими игроками!📲 "
-                                                                "@leagueofdravens* (Исчезнет после подписки)",
-            "message_id": last_message_id,
+                                                                                                        "возможно, тебе придется подождать "
+                                                                                                        "несколько секунд, пока билды "
+                                                                                                        "загрузятся... ⏳ !Не нажимай по 100 раз, просто подожди! \n\n*Подпишись на "
+                                                                                                        "канал, чтобы следить за "
+                                                                                                        "обновлениями, и общаться с "
+                                                                                                        "другими игроками!📲 "
+                                                                                                        "@leagueofdravens* (Исчезнет после подписки)",
+            "message_id": message_id,
             "parse_mode": "Markdown",  # Use HTML parse mode
             "reply_markup": reply_markup  # Inline keyboard as a JSON string
         }
-        print(str(last_message_id) + "builds")
         url = f"https://api.telegram.org/bot{bot_token}/editMessageCaption"
         response = requests.post(url, data=data)
         result = response.json()
-
-        return result
+    return result
 
 
 async def button_handler(update, context):
-    global name_global
-    global query_info
-    chat_id = query_info['result']['chat']['id']
-    global last_message_id
     callback_data = update.callback_query.data
+    message_id = update.callback_query.message.message_id
+    chat_id = update.callback_query.message.chat_id
     index_of_zero = callback_data.find('0')
-    name = callback_data[index_of_zero + 1:]
+    dict_enc = decrypt_json(load_key())
+    info = dict_enc[str(chat_id)]
+    name = info[str(message_id)]
+
     keyy = callback_data[:index_of_zero]
 
-    if not name:
-        name = name_global
+    data = get_champion_detailed_info(name)
+
+    blurb = data["blurb"]
+    title = data["id"]
+    clas = ""
+    for g in champions_data[name]['tags']:
+        clas += str(champ_class.get(g)) + ", "
+    sub = await is_subscribed(chat_id)
 
     if callback_data.startswith("runes"):
         print('runes')
         await bot.answer_callback_query(callback_query_id=update.callback_query.id, text="Генерирую...")
-        await send_image(update.effective_chat.id, name=name, key='runes', image_url='', caption=f'{name}')
-
+        await send_image(update.effective_chat.id, name=name, key='runes', image_url='', caption=f'{name}',
+                         message_id=message_id)
 
     elif callback_data.startswith("items"):
         await bot.answer_callback_query(callback_query_id=update.callback_query.id, text="В разработке")
 
     elif callback_data.startswith("builds"):
-        await send_image(update.effective_chat.id, name=name, key='builds', image_url='', caption='mamka tvoya')
+        await send_image(update.effective_chat.id, name=name, key='builds', image_url='', caption='mamka tvoya',
+                         message_id=message_id)
 
     elif keyy == "back" or keyy == "backtobuilds":
-        if name in chams:
-            rr = reworked_chams(name)
 
-        else:
-            rr = f"https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{name}_0.jpg"
-        await send_image(chat_id, rr, query_info['result']['caption'], name='', key=keyy)
+        rr = get_splash(title)
+        message = f"*{name.title()}* ({name.title()}) \n\n*Лор*💬: {blurb}\n\n*Класс*🏆: {clas[:-2]}"
+        if not sub:
+            message += "\n\n*Подпишись на канал, чтобы следить за обновлениями, и общаться с другими игроками!📲 @leagueofdravens* (Исчезнет после подписки)"
+
+        await send_image(chat_id, f"{rr}", caption=message, name=name, key=keyy, message_id=message_id)
 
     elif keyy == "skins":
         await bot.answer_callback_query(callback_query_id=update.callback_query.id, text="В разработке")
+
+    else:
+        print('unrecognized button')
 
 
 async def start(update, context):
@@ -337,16 +373,16 @@ async def start(update, context):
                      "Добро пожаловать в <strong>Лигу Дрейвена</strong>🏆, где всё вращается вокруг величия, славы и... Дрейвена, конечно же!🎯"
                      "\n \n Хочешь узнать что-то о чемпионах? Легко! Просто напиши <strong>@League_Of_Draven_Bot {имя чемпиона}</strong> или нажми на кнопку ниже, и я расскажу тебе всё, что ты захочешь.📜✨"
                      "\n\n Канал админа: https://t.me/leagueofdravens 📲 (Там ты сможешь следить за разработкой бота, давать свои идеи, и просто общаться)",
-                     key='start', name='Draven')
+                     key='start', name='Draven', message_id=update.message.message_id)
 
 
 async def inline_query(update: Update, context):
     results = []
-    global name_global
     query = update.inline_query.query
     if query:
         for champion_name, data in champions_data.items():
             name = data.get("name", "")
+
             if name.lower().startswith(query.lower()):
                 results.append(
                     InlineQueryResultArticle(
@@ -354,7 +390,7 @@ async def inline_query(update: Update, context):
                         title=name.title(),
                         description=data.get("title", ""),
                         input_message_content=InputTextMessageContent(f'Нашел!: {name.title()}'),
-                        thumbnail_url=f"https://ddragon.leagueoflegends.com/cdn/14.24.1/img/champion/{champion_name}.png"
+                        thumbnail_url=f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{champion_name}.png"
                     )
                 )
 
@@ -362,38 +398,25 @@ async def inline_query(update: Update, context):
 
 
 async def chosen_inline_result(update, context):
-    print("chosen_inline_result triggered")
-    global name_global
-    global last_message_id
-    global query_info
     chosen_result1 = update.chosen_inline_result
     result_id4 = chosen_result1.result_id[:chosen_result1.result_id.index("0")]
     user_id = chosen_result1.from_user.id
+
     title = champions_data[result_id4]['id']
     name = champions_data[result_id4]['name']
     blurb = champions_data[result_id4]['blurb']
-    name_global = title
+
     clas = ""
     sub = await is_subscribed(user_id)
     for g in champions_data[result_id4]['tags']:
         clas += str(champ_class.get(g)) + ", "
 
-    if title in chams:
-        rr = reworked_chams(title)
+    rr = get_splash(title)
+    message = f"*{name.title()}* ({title.title()}) \n\n*Лор*💬: {blurb}\n\n*Класс*🏆: {clas[:-2]}"
+    if not sub:
+        message += "\n\n*Подпишись на канал, чтобы следить за обновлениями, и общаться с другими игроками!📲 @leagueofdravens* (Исчезнет после подписки)"
 
-    else:
-        rr = f"https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{title}_0.jpg"
-    if sub:
-        sent_message = await send_image(user_id, f"{rr}",
-                                        f"*{name.title()}* \n\n*Лор*💬: {blurb}\n\n*Класс*🏆: {clas[:-2]}",
-                                        name=title, key='query')
-
-    else:
-        sent_message = await send_image(user_id, f"{rr}",
-                                        f"*{name.title()}* \n\n*Лор*💬: {blurb}\n\n*Класс*🏆: {clas[:-2]} \n\n*Подпишись на канал, чтобы следить за обновлениями, и общаться с другими игроками!📲 @leagueofdravens* (Исчезнет после подписки)",
-                                        name=title, key='query')
-    last_message_id = sent_message['result']['message_id']
-    query_info = sent_message
+    await send_image(user_id, f"{rr}", caption=message, name=title, key='query', message_id=3245626)
 
 
 async def initialize_bot():
@@ -402,7 +425,7 @@ async def initialize_bot():
     print("Данные о чемпионах загружены.")
 
 
-from flask import Flask
+
 
 app = Flask(__name__)
 
