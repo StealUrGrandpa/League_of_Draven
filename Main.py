@@ -5,7 +5,7 @@ import multiprocessing
 import tracemalloc
 from io import BytesIO
 from random import random
-from runes import rune_build
+from databases.upload_db import base64_to_image
 import requests
 from telegram import Update, Bot, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import ApplicationBuilder, CommandHandler, InlineQueryHandler, ChosenInlineResultHandler, \
@@ -16,7 +16,9 @@ from flask import Flask
 bot_token = os.getenv('bot_token')
 bot = Bot(bot_token)
 
-response = requests.get('https://ddragon.leagueoflegends.com/api/versions.json')
+session = requests.Session()
+
+response = session.get('https://ddragon.leagueoflegends.com/api/versions.json')
 versions = response.json()
 version = versions[0]
 
@@ -55,7 +57,7 @@ champ_class = {
 }
 
 champions_data = {}
-
+image_data = {}
 # Fetch champion data once at the start of the bot
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -64,19 +66,26 @@ logging.basicConfig(
 
 
 async def fetch_champion_data():
-    url = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/ru_RU/champion.json"
-    response = requests.get(url)
+    url = "https://ddragon.leagueoflegends.com/cdn/14.24.1/data/ru_RU/champion.json"
+    response = session.get(url)
     if response.status_code == 200:
         champions_data.update(response.json()['data'])
     else:
         print("Ошибка загрузки данных о чемпионах.")
 
+    url = "https://stealurgrandpa.pythonanywhere.com/database"
+    response = session.get(url)
+    if response.status_code == 200:
+        image_data.update(response.json())
+    else:
+        print("Ошибка загрузки данных о чемпионах.")
+
+
 
 async def message_handler(update, context):
     message = update.message
     user_id = message.from_user.id
-    user_name = message.from_user.username
-    text = message.text
+
 
     await bot.delete_message(chat_id=user_id, message_id=message.message_id)
 
@@ -97,10 +106,11 @@ async def send_image(chat_id, image_url, caption, name, key, message_id):
     sub = await is_subscribed(chat_id)
 
     if key == 'runes':
-        dict_enc = decrypt_json(load_key())
-        info = dict_enc[str(chat_id)]
+        dict = decrypt_json(load_key())
+        info = dict[str(chat_id)]
         name_enc = info[str(message_id)]
         print('got the data')
+
         keyboard = {
             "inline_keyboard": [
                 [
@@ -110,51 +120,40 @@ async def send_image(chat_id, image_url, caption, name, key, message_id):
         }
 
         reply_markup = json.dumps(keyboard)
-        image, image_id = rune_build(name_enc)
-        if image_id not in image_cashe.keys():
-            print(str(image_id) + "not found")
-            img_buffer = BytesIO()
-            image.save(img_buffer, format="PNG")
-            img_buffer.seek(0)  # Move to the beginning of the buffer
 
-            # Set caption and delete the previous message
-            send_photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
-            data = {
-                "chat_id": chat_id,
-                "caption": caption,
-                "parse_mode": "Markdown",
-                "reply_markup": reply_markup
-            }
-            files = {"photo": ("image.png", img_buffer, "image/png")}
-            response = requests.post(send_photo_url, data=data, files=files)
-            result = response.json()
 
-            # Extract file_id from the response
-            file_id = result['result']['photo'][0]['file_id']
-            image_cashe[image_id] = file_id
-            print(str(image_id) + "saved")
-            message_idd = result['result']['message_id']
-            delete_message_url = f"https://api.telegram.org/bot{bot_token}/deleteMessage"
-            delete_data = {
-                "chat_id": chat_id,
-                "message_id": message_idd
-            }
+        image_entry = image_data.get(name_enc, {})
 
-            requests.post(delete_message_url, data=delete_data)
 
-        file_id = image_cashe[image_id]
+
+        image = base64_to_image(image_entry[11:-2])
+
+        img_buffer = BytesIO()
+        image.save(img_buffer, format="PNG")
+        img_buffer.seek(0)
+
+        edit_media_url = f"https://api.telegram.org/bot{bot_token}/editMessageMedia"
+
+        # Prepare the media object
+        media = {
+            "type": "photo",
+            "media": "attach://photo"
+        }
+
         data = {
             "chat_id": chat_id,
-            'message_id': message_id,
-            "caption": "Вот твои руны",
-            "media": json.dumps({"type": "photo", "media": file_id}),
-            "parse_mode": "Markdown",  # Use HTML parse mode
-            "reply_markup": reply_markup  # Inline keyboard as a JSON string
+            "message_id": message_id,
+            "media": json.dumps(media),
+            "reply_markup": reply_markup,
         }
-        send_photo_url = f"https://api.telegram.org/bot{bot_token}/editMessageMedia"
-        response = requests.post(send_photo_url, data=data)
+
+        files = {
+            "photo": img_buffer
+        }
+
+        # Send the updated media
+        response = requests.post(edit_media_url, data=data, files=files)
         result = response.json()
-        print(result)
         return result
 
     elif key == 'start':
