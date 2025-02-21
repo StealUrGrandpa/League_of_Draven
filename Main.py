@@ -20,7 +20,7 @@ session = requests.Session()
 
 response = session.get('https://ddragon.leagueoflegends.com/api/versions.json')
 versions = response.json()
-version = versions[0]
+version = versions[1]
 
 
 def load_key():
@@ -28,23 +28,6 @@ def load_key():
     if secret is None:
         raise ValueError("Environment variable SECRET_KEY is not set.")
     return secret.encode()  # Convert to bytes
-
-
-def get_champion_detailed_info(champion_key):
-    url = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/ru_RU/champion/{champion_key}.json"
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json()['data'][champion_key]
-    return None
-
-
-def get_splash(champs):
-    key = get_champion_detailed_info(champs)
-    keyy = key['key']
-
-    don = f"https://cdn.communitydragon.org/{version}/champion/{keyy}/splash-art"
-
-    return don
 
 
 champ_class = {
@@ -80,8 +63,20 @@ async def fetch_champion_data():
     else:
         print("Ошибка загрузки данных о чемпионах.")
 
+def get_champion_detailed_info(champion_key):
+    return champions_data[champion_key]
 
+def get_champion_info(name):
+    url = f'https://ddragon.leagueoflegends.com/cdn/{version}/data/ru_RU/champion/{name}.json'
+    response = session.get(url)
+    return response.json()['data'][name]
+def get_splash(champs):
+    key = get_champion_detailed_info(champs)
+    keyy = key['key']
 
+    don = f"https://cdn.communitydragon.org/{version}/champion/{keyy}/splash-art"
+
+    return don
 async def message_handler(update, context):
     message = update.message
     user_id = message.from_user.id
@@ -90,22 +85,102 @@ async def message_handler(update, context):
     await bot.delete_message(chat_id=user_id, message_id=message.message_id)
 
 
-image_cashe = {}
-
-
 async def is_subscribed(user_id):
-    """Check if a user is subscribed to the channel."""
     try:
         member = await bot.get_chat_member('@leagueofdravens', user_id)
         return member.status in ["member", "administrator", "creator"]
     except Exception:
         return False
 
-
 async def send_image(chat_id, image_url, caption, name, key, message_id):
     sub = await is_subscribed(chat_id)
 
-    if key == 'runes':
+    if key == 'skins':
+        skin_names = []
+        skin_ids = []
+
+        skins = get_champion_info(name)['skins']
+        for i in skins:
+            if i['name'] == 'default':
+                skin_names.append("Стандартный")
+            else:
+                skin_names.append(i['name'])
+
+            skin_ids.append(i['num'])
+
+        keyboard = {
+            "inline_keyboard": [
+                [
+                ],
+            ]
+        }
+        count = 0
+        max_per_column = 2
+
+        for skin_name, id in zip(skin_names, skin_ids):
+
+            if count % max_per_column == 0 and count != 0:
+                keyboard["inline_keyboard"].append([])
+
+
+            new_button = {"text": skin_name, "callback_data": f"get_skin0{id}"}
+            keyboard["inline_keyboard"][-1].append(new_button)
+
+            count += 1
+        keyboard["inline_keyboard"].append([{"text": "Назад⬅️", "callback_data": f"back_from_skins0"}])
+        reply_markup = json.dumps(keyboard)
+        data = {
+            "chat_id": chat_id,
+            "caption": "Вот все скины на чемпиона: " + get_champion_info(name)['name'],
+            "message_id": message_id,
+            "parse_mode": "Markdown",
+            "reply_markup": reply_markup
+        }
+        send_photo_url = f"https://api.telegram.org/bot{bot_token}/editMessageCaption"
+        response = requests.post(send_photo_url, data=data)
+        result = response.json()
+
+
+    elif key.startswith('get_skin0'):
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Назад⬅️", "callback_data": f"skins0{name}"},
+                ],
+            ]
+        }
+        reply_markup = json.dumps(keyboard)
+        skin_id = key[10:]
+        skin_name = ''
+        for i in get_champion_info(name)['skins']:
+            if str(i['num']) == skin_id:
+
+                skin_name = i['name']
+
+        data = {
+            "chat_id": chat_id,
+            'message_id': message_id,
+            "caption": caption,
+            "media": {
+                "type": "photo",  # Указываем тип
+                "media": f"https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{name}_{skin_id}.jpg",  # URL изображения
+                "caption": f"*{skin_name}*",
+                "parse_mode": "Markdown"
+            },
+            "parse_mode": "Markdown",
+            "reply_markup": reply_markup
+        }
+        print(f'https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{name}_{skin_id}.jpg')
+        send_photo_url = f"https://api.telegram.org/bot{bot_token}/editMessageMedia"
+
+        response = requests.post(send_photo_url, json=data)
+        result = response.json()
+
+
+
+
+
+    elif key == 'runes':
         dict = decrypt_json(load_key())
         info = dict[str(chat_id)]
         name_enc = info[str(message_id)]
@@ -214,7 +289,7 @@ async def send_image(chat_id, image_url, caption, name, key, message_id):
         response = requests.post(send_photo_url, json=data)
         result = response.json()
 
-    elif key == 'back':
+    elif key.startswith('back'):
         keyboard = {
             "inline_keyboard": [
                 [
@@ -226,18 +301,38 @@ async def send_image(chat_id, image_url, caption, name, key, message_id):
         }
         reply_markup = json.dumps(keyboard)
         print('back pressed')
+        if key == 'back':
+            data = {
+                "chat_id": chat_id,
+                "caption": caption,
+                "message_id": message_id,
+                "parse_mode": "Markdown",  # Use HTML parse mode
+                "reply_markup": reply_markup  # Inline keyboard as a JSON string
+            }
+            send_photo_url = f"https://api.telegram.org/bot{bot_token}/editMessageCaption"
+            response = requests.post(send_photo_url, data=data)
+            result = response.json()
+        elif key == 'back_from_skins':
+            print('back_from_skins triggered')
+            reply_markup = json.dumps(keyboard)
+            data = {
+                "chat_id": chat_id,
+                'message_id': message_id,
+                "caption": caption,
+                "media": {
+                    "type": "photo",  # Указываем тип
+                    "media": image_url,  # URL изображения
+                    "caption": caption,
+                    # Подпись для изображения
+                    "parse_mode": "Markdown"  # Форматирование
+                },
+                "parse_mode": "Markdown",  # Use HTML parse mode
+                "reply_markup": reply_markup  # Inline keyboard as a JSON string
+            }
+            send_photo_url = f"https://api.telegram.org/bot{bot_token}/editMessageMedia"
 
-        data = {
-            "chat_id": chat_id,
-            "caption": caption,
-            "message_id": message_id,
-            "parse_mode": "Markdown",  # Use HTML parse mode
-            "reply_markup": reply_markup  # Inline keyboard as a JSON string
-        }
-        send_photo_url = f"https://api.telegram.org/bot{bot_token}/editMessageCaption"
-        response = requests.post(send_photo_url, data=data)
-        result = response.json()
-
+            response = requests.post(send_photo_url, json=data)
+            result = response.json()
     elif key == 'query':
         keyboard = {
             "inline_keyboard": [
@@ -245,7 +340,9 @@ async def send_image(chat_id, image_url, caption, name, key, message_id):
                     {"text": "Билды🛠️", "callback_data": f'builds0{name}'},
                     {"text": "Образы👑", "callback_data": f"skins0{name}"}
                 ],
-
+                [
+                    {"text": "Лор чемпиона📖", "callback_data": f'lore0'}
+                ],
             ]
         }
         reply_markup = json.dumps(keyboard)
@@ -260,7 +357,6 @@ async def send_image(chat_id, image_url, caption, name, key, message_id):
         send_photo_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
         response = requests.post(send_photo_url, data=data)
         result = response.json()
-
         message_id = result["result"]["message_id"]
         secret_key = load_key()
         see = decrypt_json(secret_key)
@@ -328,7 +424,8 @@ async def button_handler(update, context):
     name = info[str(message_id)]
 
     keyy = callback_data[:index_of_zero]
-
+    idd = callback_data[index_of_zero:]
+    print(idd)
     data = get_champion_detailed_info(name)
 
     blurb = data["blurb"]
@@ -344,6 +441,14 @@ async def button_handler(update, context):
         await send_image(update.effective_chat.id, name=name, key='runes', image_url='', caption=f'{name}',
                          message_id=message_id)
 
+    elif callback_data.startswith("skins"):
+        await send_image(update.effective_chat.id, name=name, key='skins', image_url='', caption=f'{name}',
+                         message_id=message_id)
+
+    elif keyy == 'get_skin':
+        await send_image(update.effective_chat.id, name=name, key=f'get_skin0{idd}', image_url='', caption=f'{name}',
+                         message_id=message_id)
+
     elif callback_data.startswith("items"):
         await bot.answer_callback_query(callback_query_id=update.callback_query.id, text="В разработке")
 
@@ -351,7 +456,7 @@ async def button_handler(update, context):
         await send_image(update.effective_chat.id, name=name, key='builds', image_url='', caption='mamka tvoya',
                          message_id=message_id)
 
-    elif keyy == "back" or keyy == "backtobuilds":
+    elif keyy == "back" or keyy == "backtobuilds" or keyy == 'back_from_skins':
 
         rr = get_splash(title)
         message = f"*{name.title()}* ({name.title()}) \n\n*Лор*💬: {blurb}\n\n*Класс*🏆: {clas[:-2]}"
@@ -360,11 +465,10 @@ async def button_handler(update, context):
 
         await send_image(chat_id, f"{rr}", caption=message, name=name, key=keyy, message_id=message_id)
 
-    elif keyy == "skins":
+    elif keyy == 'lore':
         await bot.answer_callback_query(callback_query_id=update.callback_query.id, text="В разработке")
-
     else:
-        print('unrecognized button')
+        print('unrecognized button ' + callback_data)
 
 
 async def start(update, context):
